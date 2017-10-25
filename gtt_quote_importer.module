@@ -1,0 +1,266 @@
+<?php
+function gtt_quote_importer_menu() 
+{
+	$items = array();
+	$items['gtt_quote_importer/form'] = array(
+		'title'	=> t('Quote Importer'),
+		'page callback'	=> 'gtt_quote_importer_form',
+		'access arguments'	=> array('access content'),
+		'description'	=> t('Upload and store a batch of quotes.'),
+		'type'	=> MENU_CALLBACK,	
+	);
+	
+	$items['gtt_quote_importer/load'] = array(
+		'title'	=> t('Quote Importer'),
+		'page callback'	=> 'gtt_quote_importer_form_testing',
+		'access arguments'	=> array('access content'),
+		'type'	=> MENU_CALLBACK,	
+	);
+	
+	return $items;
+}
+
+function gtt_quote_importer_form()
+{
+	return drupal_get_form('gtt_quote_importer_form_build');
+}
+
+function gtt_quote_importer_form_build($form_state)
+{
+	global $user;
+	
+	if(!in_array($user->uid, array(1, 4, 6)))
+		return;
+		
+	 $form = array('#attributes' => array('enctype' => 'multipart/form-data'));
+	 
+	$form['file'] = array(
+        '#type' => 'file',
+        '#title' => t('Upload CSV'),
+        '#description' => t('Upload CSV file.'),
+    );
+	
+	$form['submit'] = array(
+    	'#type' => 'submit',
+	    '#value' => 'Submit',
+	/*	'#ahah' => array(
+		  'event' => 'submit',
+		  'path' => 'gtt_quote_importer/load',
+		  'wrapper' => 'myform-wrapper',
+		  'method' => 'replace',
+		  'effect' => 'fade',
+			'progress' => array(
+		        'type' => 'bar',
+        		'message' => t('Loading...')
+		      ) 
+		)*/
+	);
+	
+	//$form['#theme'] = 'gtt_search_author_quotes_theme';
+	
+	$form['#submit'][] = 'gtt_quote_importer_form_submit';
+
+	return $form;
+}
+
+function gtt_quote_importer_form_testing()
+{
+	 drupal_json(array('status' => TRUE, 'data' => 'ddd'));
+}
+
+function gtt_quote_importer_form_submit($form, &$form_state)
+{	
+	global $user;
+	
+	if(!in_array($user->uid, array(1, 4, 6)))
+		return;
+		
+	//echo 'ddd';/*
+	$field = 'file';
+	// The directory the image will be saved to (file_directory_path()
+	// returns the path to your default files directory).
+	$directory = file_directory_path() . '/batch_quotes';
+	 
+	// file_check_directory() ensures the destination directory is valid and
+	// will attempt to create it if it doesn't already exist.
+	if (file_check_directory($directory, FILE_CREATE_DIRECTORY, $field)) {
+	 
+		// Specify the validators. The first is Drupal's built-in function for validating
+		// the image's dimensions. The second is our custom validator to exclude GIFs.
+		$validators = array(
+		  'file_validate_extensions' => array('csv'),
+		  'file_validate_size' => array('512000')
+		                                 
+		);
+		 
+		// Move the file to its final location if the validators pass, else
+		// return to the form and display the errors.
+		if ($file = file_save_upload($field, $validators, $directory)) {
+		 
+	
+		  // Set the file's status to permanent, which will prevent Drupal's file
+		  // garbage collection from deleting it.
+		  file_set_status($file, FILE_STATUS_PERMANENT);
+			
+			gtt_quote_importer_form_process($directory . "/" . $file->filename, $file->filename);
+		
+		  // We add our final file object to the form's storage array, so that it gets passed
+		  // through to the form's submit handler, where we can act on it.
+		  $form_state['storage']['file'] = $file;
+		 
+		}		
+	    else{
+    	    drupal_set_message("Something went wrong saving your file.");
+	    }
+	}
+//	else {
+//		var_dump($form['file']);
+//		drupal_set_message('Bad directotry: ' . $directory . ' ' . $field);
+//	}
+}
+
+function gtt_quote_importer_form_process($filename, $file)
+{
+//echo $_SERVER['DOCUMENT_ROOT'] . '/../config.php';
+require_once($_SERVER['DOCUMENT_ROOT'] . '/../config.php');
+	set_time_limit(3000);
+$conn = mysql_connect($gtt_db_host, $gtt_db_user, $gtt_db_pass);
+mysql_select_db('greatth4_gtt', $conn);
+
+//$fp = fopen("20130205.csv", "r");
+$fp = fopen($filename, "r");
+//exit;
+// Read the cvs file
+$error = false;
+
+mysql_query("START TRANSACTION");
+mysql_query("BEGIN");
+$count = 0;
+$block_author = 0;
+$skipped_count = 0;
+$prev_author_id = 0;
+
+while($data = fgetcsv($fp, 0, ',')){
+	if($data[0] == '' && $data[1] == '') continue;
+	// If author wasn't found, skip his quotes.
+	if($data[2] == $block_author){
+		if($block_author == 0)
+			drupal_set_message("WARNING (1): Author <strong>{$data[0]} {$data[1]} (id: {$data[2]}</strong> does not exists, skipping quotes.");
+		$skipped_count++;
+		continue;
+	}
+	
+	if($data[3] == '') $data[3] = 'is null'; else $data[3] = "= '".trim(mysql_real_escape_string($data[3]))."'";
+	if($data[4] == '') $data[4] = 'is null'; else $data[4] = "= '".trim(mysql_real_escape_string($data[4]))."'";
+	if($data[5] == '') $data[5] = 'is null'; else $data[5] = "= '".trim(mysql_real_escape_string($data[5]))."'";
+	if($data[6] == '') $data[6] = '\'\''; else $data[6] = "'".trim(mysql_real_escape_string($data[6]))."'";
+	
+	$fname = gtt_quote_importer_replaceUnicode($data[0]);
+	$lname = gtt_quote_importer_replaceUnicode($data[1]);
+
+	// Find the author id
+	$author_id = $data[2];
+	
+	// Check to see if this author exists if not already check
+	if($author_id != $prev_author_id){
+		$ok = mysql_query("select nid from content_type_author where nid = $author_id", $conn);
+		//if($author_id == 'ff'){
+		//	drupal_set_message("select nid from content_type_author where nid = $author_id");
+		//	while ($row = mysql_fetch_assoc($ok)) {
+		//		drupal_set_message(var_export($row, true));
+		//	}
+		//	drupal_set_message(mysql_num_rows($ok));
+		//}
+	
+		if(mysql_num_rows($ok) == 0){
+			drupal_set_message("WARNING: Author <strong>$fname $lname (id: {$data[2]}</strong> does not exists, skipping quotes.");
+			drupal_set_message("select nid from content_type_author where nid = $author_id");
+			$block_author = $author_id;
+			$skipped_count++;
+			continue;
+		}
+	}
+	
+	$prev_author_id = $author_id;
+	
+	
+	// Store the quote.
+	$ok = mysql_query("INSERT INTO node (type, language, title, uid, status, created, changed, comment, promote, moderate, sticky, tnid, translate) VALUES('quote', '', 'Quote', 1, 1, '".time()."', '".time()."', 0, 0, 0, 0, 0, 0)", $conn);
+	if(!$ok){
+		echo "INSERT INTO node (type, language, title, uid, status, created, changed, comment, promote, moderate, sticky, tnid, translate) VALUES('quote', '', 'Quote', 1, 1, '".time()."', '".time()."', 0, 0, 0, 0, 0, 0)";
+		echo mysql_error($conn);
+                $error = true;
+		break;
+	}
+	
+	// Get vid information
+	$insert_id = mysql_insert_id();
+$ok = 	mysql_query('INSERT INTO node_revisions (nid, title, uid) VALUES ('.$insert_id.', \'Quote\', 1)');	
+if(!$ok){
+                $error = true;
+		break;
+	}
+	$insert_revision_id = mysql_insert_id();	
+$ok =	mysql_query('UPDATE node SET vid = ' . $insert_revision_id . ' WHERE nid = ' . $insert_id);	
+if(!$ok){
+                $error = true;
+		break;
+	}
+
+$ok = mysql_query("INSERT INTO node_access (nid, gid, realm, grant_view, grant_update, grant_delete) values($insert_id, 1, 'term_access', 1, 0, 0);");
+	$ok = $ok && mysql_query("INSERT INTO node_access (nid, gid, realm, grant_view, grant_update, grant_delete) values($insert_id, 2, 'term_access', 1, 0, 0);");
+	$ok = $ok && mysql_query("INSERT INTO node_access (nid, gid, realm, grant_view, grant_update, grant_delete) values($insert_id, 6, 'term_access', 1, 1, 1);");
+if(!$ok){
+		echo "INSERT INTO node_access (nid, gid, realm, grant_view, grant_update, grant_delete) values($insert_id, 1, 'term_access', 1, 0, 0);
+		INSERT INTO node_access (nid, gid, realm, grant_view, grant_update, grant_delete) values($insert_id, 2, 'term_access', 1, 0, 0);
+		INSERT INTO node_access (nid, gid, realm, grant_view, grant_update, grant_delete) values($insert_id, 6, 'term_access', 1, 1, 1);";
+		echo mysql_error($conn);
+                $error = true;
+		break;
+	}
+			
+	$ok = mysql_query("INSERT INTO content_type_quote (vid, nid, field_quot_value, field_author_nid) VALUES($insert_revision_id, $insert_id, {$data[6]}, $author_id);", $conn);
+	
+	if(!$ok){
+echo "INSERT INTO content_type_quote (vid, nid, field_quot_value, field_author_nid) VALUES($insert_revision_id, $insert_id, {$data[6]}, $author_id);";
+		echo mysql_error($conn);
+                $error = true;
+		break;
+	}
+       // drupal_set_message("Author: {$fname} {$lname}");
+		//drupal_set_message("Adding quote: {$data[6]}");
+		$count++;
+		
+//		if($count == 30){
+//			$error = true;
+//			exit;
+	//	}
+	}
+drupal_set_message("Finished processing <strong>$file</strong> at: " . date('h:i:s A', time()));
+if($error){
+    drupal_set_message("Error, rolling back... Maybe try again in a little bit");
+    drupal_set_message("No changes saved.");
+    mysql_query("ROLLBACK");
+mysql_close($conn);
+}
+else {
+    drupal_set_message("Successfully committed changes to database.");
+    mysql_query("COMMIT");
+drupal_set_message("Successfully added $count quotes.");
+drupal_set_message("Skipped $skipped_count quotes.");
+
+mysql_close($conn);
+}
+
+fclose($fp);
+}
+
+function gtt_quote_importer_replaceUnicode($search)
+{	
+	
+	$values = explode(",","ç,æ,,á,é,í,ó,ú,à,è,ì,ò,ù,ä,ë,ï,ö,ü,ÿ,â,ê,î,ô,û,å,ø");
+	$urlTitle = str_replace($values, '%', $search);
+
+	$search = str_replace('=', 'like', $urlTitle);
+	return $search;
+}

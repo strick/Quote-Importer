@@ -1,0 +1,11 @@
+name = GTT Quote Importer
+description = Upload CSV of Quotes and add to database.
+core = 6.x
+package = GTT Modules
+
+; Information added by drupal.org packaging script on 2013-05-23
+version = "6.x-1.x-dev"
+core = "6.x"
+project = "gtt"
+datestamp = "1369270750"
+
